@@ -1,8 +1,13 @@
 uploads = []
-outputs = []
 
 [[generated]]
 id = "WJ9yue-3rsDLPuxlk6mfe"
 uri = "file://artifacts/numinjector/assets/images/icon.png"
 type = "image"
 title = "cartoon hand pin keypad app icon"
+
+[[outputs]]
+id = "1Y3pNyn8MnaEY_sg71fed"
+uri = "file://downloads/NumInjector-debug.zip"
+type = "unspecified"
+title = "NumInjector Debug APK v1.0.0 (Run #9)"
