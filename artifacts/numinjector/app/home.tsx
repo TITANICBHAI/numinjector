@@ -1,0 +1,896 @@
+import {
+  Ionicons,
+  MaterialCommunityIcons,
+} from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Animated,
+  AppState,
+  Easing,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { useInjector } from "@/context/InjectorContext";
+import { useColors } from "@/hooks/useColors";
+
+type SectionId = "target" | "range" | "settings";
+
+function SectionHeader({
+  title,
+  icon,
+  expanded,
+  onToggle,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const colors = useColors();
+  return (
+    <Pressable
+      onPress={onToggle}
+      style={[styles.sectionHeader, { borderBottomColor: colors.border }]}
+    >
+      <View style={styles.sectionHeaderLeft}>
+        {icon}
+        <Text
+          style={[
+            styles.sectionTitle,
+            { color: colors.foreground, fontFamily: "Inter_600SemiBold" },
+          ]}
+        >
+          {title}
+        </Text>
+      </View>
+      <Ionicons
+        name={expanded ? "chevron-up" : "chevron-down"}
+        size={18}
+        color={colors.mutedForeground}
+      />
+    </Pressable>
+  );
+}
+
+function ConfigInput({
+  label,
+  value,
+  onChangeText,
+  keyboardType = "numeric",
+  placeholder,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (v: string) => void;
+  keyboardType?: "numeric" | "default";
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  const colors = useColors();
+  return (
+    <View style={styles.configInputWrap}>
+      <Text
+        style={[
+          styles.configLabel,
+          { color: colors.mutedForeground, fontFamily: "Inter_500Medium" },
+        ]}
+      >
+        {label}
+      </Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        keyboardType={keyboardType}
+        placeholder={placeholder}
+        placeholderTextColor={colors.mutedForeground}
+        editable={!disabled}
+        style={[
+          styles.configInput,
+          {
+            color: colors.foreground,
+            backgroundColor: colors.muted,
+            borderColor: colors.border,
+            borderRadius: colors.radius,
+            fontFamily: "Inter_400Regular",
+            opacity: disabled ? 0.5 : 1,
+          },
+        ]}
+      />
+    </View>
+  );
+}
+
+function ModeToggle({
+  label,
+  mode,
+  onChange,
+}: {
+  label: string;
+  mode: "auto" | "manual";
+  onChange: (m: "auto" | "manual") => void;
+}) {
+  const colors = useColors();
+  return (
+    <View style={styles.modeRow}>
+      <Text
+        style={[
+          styles.configLabel,
+          { color: colors.mutedForeground, fontFamily: "Inter_500Medium" },
+        ]}
+      >
+        {label}
+      </Text>
+      <View
+        style={[
+          styles.modeToggleWrap,
+          { backgroundColor: colors.muted, borderRadius: 10 },
+        ]}
+      >
+        {(["auto", "manual"] as const).map((m) => (
+          <Pressable
+            key={m}
+            onPress={() => onChange(m)}
+            style={[
+              styles.modeToggleBtn,
+              {
+                backgroundColor:
+                  mode === m ? colors.primary : "transparent",
+                borderRadius: 8,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.modeToggleText,
+                {
+                  color:
+                    mode === m
+                      ? colors.primaryForeground
+                      : colors.mutedForeground,
+                  fontFamily:
+                    mode === m ? "Inter_600SemiBold" : "Inter_400Regular",
+                },
+              ]}
+            >
+              {m === "auto" ? "Auto" : "Manual"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function ServiceBanner() {
+  const colors = useColors();
+  const { state, openAccessibilitySettings } = useInjector();
+
+  if (state.serviceEnabled) return null;
+
+  return (
+    <Pressable
+      onPress={openAccessibilitySettings}
+      style={[
+        styles.banner,
+        {
+          backgroundColor: colors.warning + "22",
+          borderColor: colors.warning,
+          borderRadius: colors.radius,
+        },
+      ]}
+    >
+      <Ionicons
+        name="warning-outline"
+        size={16}
+        color={colors.warning}
+      />
+      <Text
+        style={[
+          styles.bannerText,
+          { color: colors.warning, fontFamily: "Inter_500Medium" },
+        ]}
+      >
+        Accessibility Service not enabled — tap to fix
+      </Text>
+    </Pressable>
+  );
+}
+
+export default function HomeScreen() {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const { config, setConfig, state, start, stop, refreshServiceStatus } =
+    useInjector();
+
+  const [expanded, setExpanded] = useState<Set<SectionId>>(
+    new Set(["target", "range"])
+  );
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const progressWidth = useRef(new Animated.Value(0)).current;
+
+  const toggleSection = useCallback((id: SectionId) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") refreshServiceStatus();
+    });
+    return () => sub.remove();
+  }, [refreshServiceStatus]);
+
+  useEffect(() => {
+    if (state.running) {
+      activateKeepAwakeAsync();
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 0.5,
+            duration: 800,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 800,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulse.start();
+      return () => {
+        pulse.stop();
+        deactivateKeepAwake();
+      };
+    } else {
+      deactivateKeepAwake();
+      pulseAnim.setValue(1);
+    }
+  }, [state.running, pulseAnim]);
+
+  useEffect(() => {
+    const total = config.endNumber - config.startNumber;
+    if (total <= 0) return;
+    const progress = (state.current - config.startNumber) / total;
+    Animated.timing(progressWidth, {
+      toValue: Math.max(0, Math.min(1, progress)),
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  }, [state.current, config.startNumber, config.endNumber, progressWidth]);
+
+  const handleStartStop = useCallback(async () => {
+    if (state.running) {
+      stop();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      await start();
+    }
+  }, [state.running, stop, start]);
+
+  const isExpanded = (id: SectionId) => expanded.has(id);
+
+  const formatNum = (n: number) => {
+    if (config.padding > 0) {
+      return String(n).padStart(config.padding, config.padChar);
+    }
+    return String(n);
+  };
+
+  return (
+    <View style={[styles.root, { backgroundColor: colors.background }]}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: Platform.OS === "web" ? 67 + 16 : insets.top + 16,
+            paddingBottom: Platform.OS === "web" ? 34 + 40 : insets.bottom + 40,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.headerRow}>
+          <View>
+            <Text
+              style={[
+                styles.appTitle,
+                { color: colors.primary, fontFamily: "Inter_700Bold" },
+              ]}
+            >
+              NumInjector
+            </Text>
+            <Text
+              style={[
+                styles.appSub,
+                {
+                  color: colors.mutedForeground,
+                  fontFamily: "Inter_400Regular",
+                },
+              ]}
+            >
+              Automated numeric field testing
+            </Text>
+          </View>
+          <View style={styles.serviceStatusWrap}>
+            <View
+              style={[
+                styles.serviceStatusDot,
+                {
+                  backgroundColor: state.serviceEnabled
+                    ? colors.success
+                    : colors.destructive,
+                },
+              ]}
+            />
+            <Text
+              style={[
+                styles.serviceStatusText,
+                {
+                  color: state.serviceEnabled
+                    ? colors.success
+                    : colors.destructive,
+                  fontFamily: "Inter_500Medium",
+                },
+              ]}
+            >
+              {state.serviceEnabled ? "Service Active" : "Service Off"}
+            </Text>
+          </View>
+        </View>
+
+        <ServiceBanner />
+
+        {(state.running || state.found || state.error) && (
+          <View
+            style={[
+              styles.statusCard,
+              {
+                backgroundColor: state.found
+                  ? colors.success + "18"
+                  : state.error
+                    ? colors.destructive + "18"
+                    : colors.card,
+                borderColor: state.found
+                  ? colors.success
+                  : state.error
+                    ? colors.destructive
+                    : colors.primary,
+                borderRadius: colors.radius,
+              },
+            ]}
+          >
+            {state.running && (
+              <>
+                <View style={styles.statusRunningRow}>
+                  <Animated.View
+                    style={[
+                      styles.statusDotLive,
+                      {
+                        backgroundColor: colors.primary,
+                        opacity: pulseAnim,
+                      },
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.statusLabel,
+                      {
+                        color: colors.primary,
+                        fontFamily: "Inter_600SemiBold",
+                      },
+                    ]}
+                  >
+                    Running
+                  </Text>
+                  <Text
+                    style={[
+                      styles.attemptsText,
+                      {
+                        color: colors.mutedForeground,
+                        fontFamily: "Inter_400Regular",
+                      },
+                    ]}
+                  >
+                    {state.attempts} attempts
+                  </Text>
+                </View>
+                <Text
+                  style={[
+                    styles.currentNum,
+                    {
+                      color: colors.foreground,
+                      fontFamily: "Inter_700Bold",
+                    },
+                  ]}
+                >
+                  {formatNum(state.current)}
+                </Text>
+                <View
+                  style={[
+                    styles.progressTrack,
+                    { backgroundColor: colors.muted, borderRadius: 4 },
+                  ]}
+                >
+                  <Animated.View
+                    style={[
+                      styles.progressFill,
+                      {
+                        backgroundColor: colors.primary,
+                        borderRadius: 4,
+                        width: progressWidth.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ["0%", "100%"],
+                        }),
+                      },
+                    ]}
+                  />
+                </View>
+              </>
+            )}
+            {state.found && (
+              <View style={styles.resultRow}>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={28}
+                  color={colors.success}
+                />
+                <View>
+                  <Text
+                    style={[
+                      styles.resultLabel,
+                      {
+                        color: colors.success,
+                        fontFamily: "Inter_700Bold",
+                      },
+                    ]}
+                  >
+                    Found!
+                  </Text>
+                  <Text
+                    style={[
+                      styles.resultValue,
+                      {
+                        color: colors.foreground,
+                        fontFamily: "Inter_600SemiBold",
+                      },
+                    ]}
+                  >
+                    Value: {state.foundValue}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.attemptsText,
+                      {
+                        color: colors.mutedForeground,
+                        fontFamily: "Inter_400Regular",
+                      },
+                    ]}
+                  >
+                    {state.attempts} attempts
+                  </Text>
+                </View>
+              </View>
+            )}
+            {state.error && (
+              <View style={styles.resultRow}>
+                <Ionicons
+                  name="alert-circle"
+                  size={24}
+                  color={colors.destructive}
+                />
+                <Text
+                  style={[
+                    styles.errorText,
+                    {
+                      color: colors.destructive,
+                      fontFamily: "Inter_500Medium",
+                    },
+                  ]}
+                >
+                  {state.error}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.card,
+              borderColor: colors.border,
+              borderRadius: colors.radius,
+            },
+          ]}
+        >
+          <SectionHeader
+            title="Target Selection"
+            icon={
+              <MaterialCommunityIcons
+                name="crosshairs"
+                size={18}
+                color={colors.primary}
+              />
+            }
+            expanded={isExpanded("target")}
+            onToggle={() => toggleSection("target")}
+          />
+          {isExpanded("target") && (
+            <View style={styles.sectionBody}>
+              <ModeToggle
+                label="Input Field"
+                mode={config.fieldMode}
+                onChange={(m) => setConfig({ fieldMode: m })}
+              />
+              {config.fieldMode === "manual" && (
+                <ConfigInput
+                  label="Field hint text (content-desc or text)"
+                  value={config.fieldHint}
+                  onChangeText={(v) => setConfig({ fieldHint: v })}
+                  keyboardType="default"
+                  placeholder="e.g. Enter PIN, passcode..."
+                  disabled={state.running}
+                />
+              )}
+              <View style={[styles.divider, { backgroundColor: colors.border }]} />
+              <ModeToggle
+                label="Submit Button"
+                mode={config.buttonMode}
+                onChange={(m) => setConfig({ buttonMode: m })}
+              />
+              {config.buttonMode === "manual" && (
+                <ConfigInput
+                  label="Button hint text (content-desc or text)"
+                  value={config.buttonHint}
+                  onChangeText={(v) => setConfig({ buttonHint: v })}
+                  keyboardType="default"
+                  placeholder="e.g. OK, Confirm, Submit..."
+                  disabled={state.running}
+                />
+              )}
+            </View>
+          )}
+        </View>
+
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.card,
+              borderColor: colors.border,
+              borderRadius: colors.radius,
+            },
+          ]}
+        >
+          <SectionHeader
+            title="Number Range"
+            icon={
+              <MaterialCommunityIcons
+                name="numeric"
+                size={18}
+                color={colors.secondary}
+              />
+            }
+            expanded={isExpanded("range")}
+            onToggle={() => toggleSection("range")}
+          />
+          {isExpanded("range") && (
+            <View style={styles.sectionBody}>
+              <View style={styles.row2}>
+                <View style={{ flex: 1 }}>
+                  <ConfigInput
+                    label="Start"
+                    value={String(config.startNumber)}
+                    onChangeText={(v) =>
+                      setConfig({ startNumber: parseInt(v) || 0 })
+                    }
+                    disabled={state.running}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ConfigInput
+                    label="End"
+                    value={String(config.endNumber)}
+                    onChangeText={(v) =>
+                      setConfig({ endNumber: parseInt(v) || 9999 })
+                    }
+                    disabled={state.running}
+                  />
+                </View>
+              </View>
+              <View style={styles.row2}>
+                <View style={{ flex: 1 }}>
+                  <ConfigInput
+                    label="Step"
+                    value={String(config.step)}
+                    onChangeText={(v) =>
+                      setConfig({ step: Math.max(1, parseInt(v) || 1) })
+                    }
+                    disabled={state.running}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ConfigInput
+                    label="Delay (ms)"
+                    value={String(config.delayMs)}
+                    onChangeText={(v) =>
+                      setConfig({ delayMs: Math.max(50, parseInt(v) || 400) })
+                    }
+                    disabled={state.running}
+                  />
+                </View>
+              </View>
+            </View>
+          )}
+        </View>
+
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.card,
+              borderColor: colors.border,
+              borderRadius: colors.radius,
+            },
+          ]}
+        >
+          <SectionHeader
+            title="Formatting"
+            icon={
+              <Ionicons name="code-slash-outline" size={18} color={colors.accent} />
+            }
+            expanded={isExpanded("settings")}
+            onToggle={() => toggleSection("settings")}
+          />
+          {isExpanded("settings") && (
+            <View style={styles.sectionBody}>
+              <View style={styles.row2}>
+                <View style={{ flex: 1 }}>
+                  <ConfigInput
+                    label="Pad length (0 = off)"
+                    value={String(config.padding)}
+                    onChangeText={(v) =>
+                      setConfig({ padding: parseInt(v) || 0 })
+                    }
+                    disabled={state.running}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ConfigInput
+                    label="Pad character"
+                    value={config.padChar}
+                    onChangeText={(v) =>
+                      setConfig({ padChar: v.slice(-1) || "0" })
+                    }
+                    keyboardType="default"
+                    disabled={state.running || config.padding === 0}
+                  />
+                </View>
+              </View>
+              <Text
+                style={[
+                  styles.previewText,
+                  {
+                    color: colors.mutedForeground,
+                    fontFamily: "Inter_400Regular",
+                  },
+                ]}
+              >
+                Preview:{" "}
+                <Text
+                  style={{
+                    color: colors.primary,
+                    fontFamily: "Inter_600SemiBold",
+                  }}
+                >
+                  {formatNum(config.startNumber)}
+                </Text>{" "}
+                ...{" "}
+                <Text
+                  style={{
+                    color: colors.primary,
+                    fontFamily: "Inter_600SemiBold",
+                  }}
+                >
+                  {formatNum(config.endNumber)}
+                </Text>
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.ctaWrap}>
+          <Pressable
+            onPress={handleStartStop}
+            disabled={!state.serviceEnabled && !state.running}
+            style={({ pressed }) => [
+              styles.startBtn,
+              {
+                backgroundColor: state.running
+                  ? colors.destructive
+                  : pressed
+                    ? colors.primary + "cc"
+                    : colors.primary,
+                borderRadius: colors.radius + 4,
+                opacity:
+                  !state.serviceEnabled && !state.running ? 0.5 : pressed ? 0.85 : 1,
+              },
+            ]}
+          >
+            <Ionicons
+              name={state.running ? "stop" : "play"}
+              size={20}
+              color={state.running ? colors.destructiveForeground : colors.primaryForeground}
+            />
+            <Text
+              style={[
+                styles.startBtnText,
+                {
+                  color: state.running
+                    ? colors.destructiveForeground
+                    : colors.primaryForeground,
+                  fontFamily: "Inter_700Bold",
+                },
+              ]}
+            >
+              {state.running ? "Stop Injection" : "Start Injection"}
+            </Text>
+          </Pressable>
+          {!state.serviceEnabled && (
+            <Text
+              style={[
+                styles.disabledHint,
+                {
+                  color: colors.mutedForeground,
+                  fontFamily: "Inter_400Regular",
+                },
+              ]}
+            >
+              Enable Accessibility Service first
+            </Text>
+          )}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+  scroll: { flex: 1 },
+  content: { paddingHorizontal: 16, gap: 12 },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 4,
+  },
+  appTitle: { fontSize: 22 },
+  appSub: { fontSize: 12, marginTop: 2 },
+  serviceStatusWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  serviceStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  serviceStatusText: { fontSize: 12 },
+  banner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+  },
+  bannerText: { fontSize: 13, flex: 1 },
+  statusCard: {
+    padding: 16,
+    borderWidth: 1.5,
+    gap: 10,
+  },
+  statusRunningRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  statusDotLive: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusLabel: { fontSize: 13, flex: 1 },
+  attemptsText: { fontSize: 12 },
+  currentNum: { fontSize: 48, textAlign: "center" },
+  progressTrack: { height: 4, width: "100%" },
+  progressFill: { height: "100%" },
+  resultRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  resultLabel: { fontSize: 16 },
+  resultValue: { fontSize: 14 },
+  errorText: { fontSize: 13, flex: 1 },
+  card: {
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderBottomWidth: 0,
+  },
+  sectionHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
+  sectionTitle: { fontSize: 14 },
+  sectionBody: { padding: 14, gap: 12 },
+  modeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  modeToggleWrap: {
+    flexDirection: "row",
+    padding: 3,
+    gap: 2,
+  },
+  modeToggleBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  modeToggleText: { fontSize: 13 },
+  configInputWrap: { gap: 6 },
+  configLabel: { fontSize: 12 },
+  configInput: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    borderWidth: 1,
+  },
+  divider: { height: 1 },
+  row2: { flexDirection: "row", gap: 10 },
+  previewText: { fontSize: 12, marginTop: 4 },
+  ctaWrap: { gap: 8, marginTop: 4 },
+  startBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 18,
+  },
+  startBtnText: { fontSize: 18 },
+  disabledHint: { textAlign: "center", fontSize: 12 },
+});
+
+function formatNum(n: number, config?: { padding: number; padChar: string }) {
+  if (config && config.padding > 0) {
+    return String(n).padStart(config.padding, config.padChar);
+  }
+  return String(n);
+}
