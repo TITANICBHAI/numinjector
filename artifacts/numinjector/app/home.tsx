@@ -235,9 +235,13 @@ export default function HomeScreen() {
     return () => sub.remove();
   }, [refreshServiceStatus]);
 
+  const keepAwakeActive = useRef(false);
+
   useEffect(() => {
     if (state.running) {
-      activateKeepAwakeAsync();
+      activateKeepAwakeAsync().then(() => {
+        keepAwakeActive.current = true;
+      }).catch(() => {});
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -257,10 +261,16 @@ export default function HomeScreen() {
       pulse.start();
       return () => {
         pulse.stop();
-        deactivateKeepAwake();
+        if (keepAwakeActive.current) {
+          deactivateKeepAwake();
+          keepAwakeActive.current = false;
+        }
       };
     } else {
-      deactivateKeepAwake();
+      if (keepAwakeActive.current) {
+        deactivateKeepAwake();
+        keepAwakeActive.current = false;
+      }
       pulseAnim.setValue(1);
     }
   }, [state.running, pulseAnim]);
