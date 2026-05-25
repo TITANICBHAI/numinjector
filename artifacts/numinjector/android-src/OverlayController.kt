@@ -137,7 +137,7 @@ class OverlayController(
             text = "≡  NumInjector"
             setTextColor(COL_CYAN)
             textSize = 11f
-            layoutParams = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }.also { headerRow.addView(it) }
         tvStatus = TextView(ctx).apply {
             text = "READY"
