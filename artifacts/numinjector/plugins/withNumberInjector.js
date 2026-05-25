@@ -48,6 +48,7 @@ function withKotlinSources(config) {
         "NumberInjectorPackage.kt",
         "NumberInjectorAccessibilityService.kt",
         "InjectionConfig.kt",
+        "OverlayController.kt",
       ];
       for (const f of ktFiles) {
         const src = path.join(srcDir, f);

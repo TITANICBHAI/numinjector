@@ -60,6 +60,18 @@ interface InjectorContextType {
   refreshServiceStatus: () => Promise<void>;
   openAccessibilitySettings: () => void;
   openOverlaySettings: () => void;
+  // Tap-to-pick targeting
+  pickedField: string | null;
+  pickedButton: string | null;
+  startFieldPick: () => void;
+  startButtonPick: () => void;
+  cancelPick: () => void;
+  clearPickedField: () => void;
+  clearPickedButton: () => void;
+  // Floating overlay bubble
+  overlayVisible: boolean;
+  showOverlay: () => void;
+  hideOverlay: () => void;
 }
 
 const defaultConfig: InjectorConfig = {
@@ -113,6 +125,16 @@ const InjectorContext = createContext<InjectorContextType>({
   refreshServiceStatus: async () => {},
   openAccessibilitySettings: () => {},
   openOverlaySettings: () => {},
+  pickedField: null,
+  pickedButton: null,
+  startFieldPick: () => {},
+  startButtonPick: () => {},
+  cancelPick: () => {},
+  clearPickedField: () => {},
+  clearPickedButton: () => {},
+  overlayVisible: false,
+  showOverlay: () => {},
+  hideOverlay: () => {},
 });
 
 const NativeInjector =
@@ -128,6 +150,9 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<InjectionState>(defaultState);
   const [history, setHistory] = useState<SessionRecord[]>([]);
   const [onboarded, setOnboardedState] = useState(false);
+  const [pickedField, setPickedField] = useState<string | null>(null);
+  const [pickedButton, setPickedButton] = useState<string | null>(null);
+  const [overlayVisible, setOverlayVisible] = useState(false);
   const sessionStartRef = useRef<number | null>(null);
   const sessionConfigRef = useRef<InjectorConfig>(defaultConfig);
 
@@ -173,6 +198,10 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
             current: event.current ?? prev.current,
             attempts: event.attempts ?? prev.attempts,
           }));
+        } else if (event.type === "fieldPicked") {
+          setPickedField(event.label ?? "field");
+        } else if (event.type === "buttonPicked") {
+          setPickedButton(event.label ?? "button");
         } else if (event.type === "found") {
           const dur = sessionStartRef.current
             ? Date.now() - sessionStartRef.current
@@ -330,6 +359,44 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
     NativeInjector?.openOverlaySettings().catch(() => {});
   }, []);
 
+  // ── Tap-to-pick targeting ────────────────────────────────────────────────
+
+  const startFieldPick = useCallback(() => {
+    NativeInjector?.startFieldPick().catch(() => {});
+  }, []);
+
+  const startButtonPick = useCallback(() => {
+    NativeInjector?.startButtonPick().catch(() => {});
+  }, []);
+
+  const cancelPick = useCallback(() => {
+    NativeInjector?.cancelPick().catch(() => {});
+  }, []);
+
+  const clearPickedField = useCallback(() => {
+    setPickedField(null);
+    NativeInjector?.clearPickedField().catch(() => {});
+  }, []);
+
+  const clearPickedButton = useCallback(() => {
+    setPickedButton(null);
+    NativeInjector?.clearPickedButton().catch(() => {});
+  }, []);
+
+  // ── Floating overlay bubble ──────────────────────────────────────────────
+
+  const showOverlay = useCallback(() => {
+    NativeInjector?.showOverlay()
+      .then(() => setOverlayVisible(true))
+      .catch(() => {});
+  }, []);
+
+  const hideOverlay = useCallback(() => {
+    NativeInjector?.hideOverlay()
+      .then(() => setOverlayVisible(false))
+      .catch(() => {});
+  }, []);
+
   return (
     <InjectorContext.Provider
       value={{
@@ -346,6 +413,16 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
         refreshServiceStatus,
         openAccessibilitySettings,
         openOverlaySettings,
+        pickedField,
+        pickedButton,
+        startFieldPick,
+        startButtonPick,
+        cancelPick,
+        clearPickedField,
+        clearPickedButton,
+        overlayVisible,
+        showOverlay,
+        hideOverlay,
       }}
     >
       {children}

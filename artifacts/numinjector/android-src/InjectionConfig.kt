@@ -1,5 +1,26 @@
 package com.numinjector
 
+import android.graphics.Rect
+
+/**
+ * Bounds-based record of a UI node the user physically tapped to select.
+ * Used for precise targeting during injection instead of text-hint guessing.
+ */
+data class PickedTargetInfo(
+    val left: Int,
+    val top: Int,
+    val right: Int,
+    val bottom: Int,
+    val viewId: String?,       // android:id resource name if available (most stable)
+    val className: String?,
+    val label: String,         // display label shown in bubble & app UI
+) {
+    fun toRect() = Rect(left, top, right, bottom)
+    fun matches(bounds: Rect) =
+        bounds.left == left && bounds.top == top &&
+        bounds.right == right && bounds.bottom == bottom
+}
+
 data class InjectionConfig(
     val startNumber: Int,
     val endNumber: Int,

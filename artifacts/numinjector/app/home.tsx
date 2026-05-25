@@ -213,8 +213,11 @@ export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { config, setConfig, state, history, start, stop, refreshServiceStatus } =
-    useInjector();
+  const {
+    config, setConfig, state, history, start, stop, refreshServiceStatus,
+    pickedField, pickedButton, startFieldPick, startButtonPick,
+    clearPickedField, clearPickedButton, overlayVisible, showOverlay, hideOverlay,
+  } = useInjector();
 
   const SPEED_PRESETS = [
     { label: "⚡ Turbo", ms: 50 },
@@ -609,37 +612,137 @@ export default function HomeScreen() {
           />
           {isExpanded("target") && (
             <View style={styles.sectionBody}>
-              <ModeToggle
-                label="Input Field"
-                mode={config.fieldMode}
-                onChange={(m) => setConfig({ fieldMode: m })}
-              />
-              {config.fieldMode === "manual" && (
-                <ConfigInput
-                  label="Field hint text (content-desc or text)"
-                  value={config.fieldHint}
-                  onChangeText={(v) => setConfig({ fieldHint: v })}
-                  keyboardType="default"
-                  placeholder="e.g. Enter PIN, passcode..."
-                  disabled={state.running}
+              {/* Overlay bubble toggle */}
+              <Pressable
+                onPress={overlayVisible ? hideOverlay : showOverlay}
+                disabled={state.running ? false : !state.serviceEnabled}
+                style={({ pressed }) => [
+                  styles.overlayToggleBtn,
+                  {
+                    backgroundColor: overlayVisible
+                      ? colors.primary + "22"
+                      : pressed
+                        ? colors.muted
+                        : colors.muted + "55",
+                    borderColor: overlayVisible ? colors.primary : colors.border,
+                    borderRadius: colors.radius - 2,
+                    opacity: !state.serviceEnabled && !overlayVisible ? 0.5 : 1,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={overlayVisible ? "layers" : "layers-outline"}
+                  size={16}
+                  color={overlayVisible ? colors.primary : colors.mutedForeground}
                 />
-              )}
+                <Text
+                  style={[
+                    styles.overlayToggleText,
+                    {
+                      color: overlayVisible ? colors.primary : colors.mutedForeground,
+                      fontFamily: overlayVisible ? "Inter_600SemiBold" : "Inter_400Regular",
+                    },
+                  ]}
+                >
+                  {overlayVisible ? "Overlay On — floating bubble active" : "Show Overlay Bubble"}
+                </Text>
+              </Pressable>
+
               <View style={[styles.divider, { backgroundColor: colors.border }]} />
-              <ModeToggle
-                label="Submit Button"
-                mode={config.buttonMode}
-                onChange={(m) => setConfig({ buttonMode: m })}
-              />
-              {config.buttonMode === "manual" && (
-                <ConfigInput
-                  label="Button hint text (content-desc or text)"
-                  value={config.buttonHint}
-                  onChangeText={(v) => setConfig({ buttonHint: v })}
-                  keyboardType="default"
-                  placeholder="e.g. OK, Confirm, Submit..."
-                  disabled={state.running}
-                />
-              )}
+
+              {/* Field picker */}
+              <View style={styles.pickRow}>
+                <View style={styles.pickInfo}>
+                  <Text style={[styles.pickLabel, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>
+                    Input Field
+                  </Text>
+                  <Text
+                    style={[styles.pickValue, { color: pickedField ? colors.primary : colors.mutedForeground, fontFamily: "Inter_400Regular" }]}
+                    numberOfLines={1}
+                  >
+                    {pickedField ? `✓ ${pickedField}` : "auto-detect (first editable field)"}
+                  </Text>
+                </View>
+                <View style={styles.pickBtns}>
+                  {pickedField && (
+                    <Pressable
+                      onPress={clearPickedField}
+                      disabled={state.running}
+                      style={({ pressed }) => [styles.pickClearBtn, { opacity: pressed || state.running ? 0.5 : 1 }]}
+                    >
+                      <Ionicons name="close-circle" size={18} color={colors.destructive} />
+                    </Pressable>
+                  )}
+                  <Pressable
+                    onPress={startFieldPick}
+                    disabled={state.running || !state.serviceEnabled}
+                    style={({ pressed }) => [
+                      styles.pickBtn,
+                      {
+                        backgroundColor: pressed ? colors.primary + "33" : colors.primary + "18",
+                        borderColor: colors.primary + "66",
+                        borderRadius: colors.radius - 4,
+                        opacity: state.running || !state.serviceEnabled ? 0.4 : 1,
+                      },
+                    ]}
+                  >
+                    <Ionicons name="locate" size={14} color={colors.primary} />
+                    <Text style={[styles.pickBtnText, { color: colors.primary, fontFamily: "Inter_600SemiBold" }]}>
+                      Pick
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+              {/* Button picker */}
+              <View style={styles.pickRow}>
+                <View style={styles.pickInfo}>
+                  <Text style={[styles.pickLabel, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>
+                    Submit Button
+                  </Text>
+                  <Text
+                    style={[styles.pickValue, { color: pickedButton ? colors.secondary : colors.mutedForeground, fontFamily: "Inter_400Regular" }]}
+                    numberOfLines={1}
+                  >
+                    {pickedButton ? `✓ ${pickedButton}` : "auto-detect (first clickable button)"}
+                  </Text>
+                </View>
+                <View style={styles.pickBtns}>
+                  {pickedButton && (
+                    <Pressable
+                      onPress={clearPickedButton}
+                      disabled={state.running}
+                      style={({ pressed }) => [styles.pickClearBtn, { opacity: pressed || state.running ? 0.5 : 1 }]}
+                    >
+                      <Ionicons name="close-circle" size={18} color={colors.destructive} />
+                    </Pressable>
+                  )}
+                  <Pressable
+                    onPress={startButtonPick}
+                    disabled={state.running || !state.serviceEnabled}
+                    style={({ pressed }) => [
+                      styles.pickBtn,
+                      {
+                        backgroundColor: pressed ? colors.secondary + "33" : colors.secondary + "18",
+                        borderColor: colors.secondary + "66",
+                        borderRadius: colors.radius - 4,
+                        opacity: state.running || !state.serviceEnabled ? 0.4 : 1,
+                      },
+                    ]}
+                  >
+                    <Ionicons name="locate" size={14} color={colors.secondary} />
+                    <Text style={[styles.pickBtnText, { color: colors.secondary, fontFamily: "Inter_600SemiBold" }]}>
+                      Pick
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <Text style={[styles.pickHint, { color: colors.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                Tap Pick → switch to your target app → tap the field or button. The service locks onto it exactly.
+              </Text>
             </View>
           )}
         </View>
@@ -1066,6 +1169,36 @@ const styles = StyleSheet.create({
   switchLeft: { flex: 1, gap: 2 },
   switchLabel: { fontSize: 14 },
   switchDesc: { fontSize: 11, lineHeight: 16 },
+  overlayToggleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+  },
+  overlayToggleText: { fontSize: 13, flex: 1 },
+  pickRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    minHeight: 52,
+  },
+  pickInfo: { flex: 1, gap: 3 },
+  pickLabel: { fontSize: 13 },
+  pickValue: { fontSize: 11 },
+  pickBtns: { flexDirection: "row", alignItems: "center", gap: 6 },
+  pickBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderWidth: 1,
+  },
+  pickBtnText: { fontSize: 12 },
+  pickClearBtn: { padding: 2 },
+  pickHint: { fontSize: 11, lineHeight: 16, marginTop: 2 },
 });
 
 function formatNum(n: number, config?: { padding: number; padChar: string }) {
