@@ -1,45 +1,92 @@
-# [Project name]
+# NumInjector
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+An Android automation tool that systematically injects number sequences into any on-screen input field using Android's Accessibility Service (Kotlin) and a React Native UI (Expo, old arch, no Turbo modules).
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/numinjector run dev` — start the Expo dev server (scan QR with Expo Go on Android)
+- `pnpm run typecheck` — full typecheck across all workspace packages
+- `bash scripts/push-to-github.sh "message"` — commit and push to GitHub
+- Required secret: `GITHUB_PERSONAL_ACCESS_TOKEN` — for the push-to-GitHub workflow
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- **pnpm workspaces**, Node.js 24, TypeScript 5.9
+- **UI**: Expo SDK 54 + React Native 0.81, Expo Router (file-based routing), old architecture (`newArchEnabled=false`)
+- **Native**: Pure Kotlin — Accessibility Service + `ReactContextBaseJavaModule` bridge (old arch, no Turbo)
+- **State**: React Context + AsyncStorage (no backend, frontend-only)
+- **Animations**: React Native `Animated` API (no Reanimated plugin — explicitly removed from babel config)
+- **Keep screen on**: `expo-keep-awake` (activated only while injection is running)
+- **Build**: `expo prebuild` → Gradle (generates `android/` from `android-src/` via config plugin)
 
-## Where things live
+## Where Things Live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+```
+artifacts/numinjector/
+├── app/
+│   ├── _layout.tsx          # Root stack + providers (SafeArea, GestureHandler, QueryClient, InjectorProvider)
+│   ├── index.tsx            # Entry — redirects to /onboarding or /home via AsyncStorage
+│   ├── onboarding.tsx       # 4-step onboarding: Welcome → Accessibility → Overlay → Keep-screen-on
+│   └── home.tsx             # Main screen: service status, target config, range config, start/stop
+├── context/
+│   └── InjectorContext.tsx  # Shared state, NativeModules bridge, NativeEventEmitter listener
+├── constants/colors.ts      # Dark terminal theme (navy #080e1a, cyan #00d4ff, orange #ff6b35)
+├── hooks/useColors.ts       # Theme hook
+├── android-src/             # Kotlin source (copied into android/ by config plugin at prebuild)
+│   ├── NumberInjectorAccessibilityService.kt
+│   ├── NumberInjectorModule.kt
+│   ├── NumberInjectorPackage.kt
+│   ├── InjectionConfig.kt
+│   └── accessibility_service_config.xml
+├── plugins/
+│   └── withNumberInjector.js  # Expo config plugin: old arch, manifest, permissions, package registration
+└── app.json                 # newArchEnabled: false, plugin declared
 
-## Architecture decisions
+scripts/
+└── push-to-github.sh        # Commit + push script (uses GITHUB_PERSONAL_ACCESS_TOKEN)
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+README.md                    # Full project spec, architecture, bridge API, build instructions
+```
+
+## Architecture Decisions
+
+- **Old arch only** — `newArchEnabled=false` is set by the config plugin in `gradle.properties`. The Kotlin module uses `ReactContextBaseJavaModule` + `@ReactMethod` + `DeviceEventManagerModule.RCTDeviceEventEmitter`, which are the old-arch primitives. No Turbo, no JSI.
+- **No Reanimated plugin** — `babel.config.js` contains only `babel-preset-expo`. All animations use RN's built-in `Animated` API to avoid the Reanimated Babel transform entirely.
+- **Config plugin pattern** — Kotlin source lives in `android-src/` (tracked in git, editable without touching the generated `android/` tree). The plugin copies files at `expo prebuild` time, keeping prebuild idempotent.
+- **Heuristic found-detection** — after each injection + button click, the service checks if the input field text changed or the root window changed (navigation). Conservative by design; user can always stop manually.
+- **Frontend-only** — all persistence via AsyncStorage. No API server, no database.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+NumInjector lets users (or testers) automate the entry of number sequences into any Android input field across any app, using the Accessibility Service to interact with fields the user cannot access programmatically any other way. Key capabilities:
 
-## User preferences
+- **Auto or manual target selection** — auto-detects the first editable field and clickable button on screen, or user provides a hint string to match by content-description or label text
+- **Configurable range** — set start, end, step, and delay (ms) between attempts
+- **Zero-padding** — format numbers as `0042`, `00007`, etc. to match fixed-width PIN fields
+- **Live progress** — animated counter, attempt count, progress bar shown during injection
+- **Found detection** — stops automatically when the target field clears or the app navigates (success heuristic)
+- **Keep screen on** — screen stays on for the duration of the injection run
+- **Guided onboarding** — step-by-step permission setup (Accessibility Service → overlay → keep-screen-on)
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+## User Preferences
+
+- Old architecture (no new arch / Turbo modules) — explicit requirement
+- No Reanimated plugin — explicit requirement
+- UI in React Native / Expo
+- Accessibility Service + native bridge logic in pure Kotlin
+- Proper onboarding flow with accessibility permissions
+- Keep screen on while running
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- **Expo Go preview shows UI only** — the injection engine requires a native APK (`expo prebuild` + `./gradlew assembleDebug`). `NativeModules.NumberInjector` will be `null` in Expo Go; the context handles this gracefully.
+- **Accessibility Service must be enabled manually** — the user must go to Android Settings → Accessibility → NumInjector and toggle it on. The app opens that screen for them during onboarding.
+- **`deactivateKeepAwake()` crashes if never activated** — always guard with the `keepAwakeActive` ref before calling it (already implemented in `home.tsx`).
+- **Old arch + Kotlin** — any new `@ReactMethod` must follow the old-arch pattern (no `@ReactMethod(isBlockingSynchronousMethod = true)` for promises; use async + Promise). Do not add `TurboReactPackage`.
+- **Config plugin idempotency** — `expo prebuild` is safe to re-run; the plugin checks for existing entries before adding permissions/services to the manifest.
+- **Push script masks the token** — `push-to-github.sh` pipes output through `grep -v GITHUB_PERSONAL_ACCESS_TOKEN` to avoid leaking it in logs.
 
-## Pointers
+## GitHub
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- **Repo**: https://github.com/TITANICBHAI/numinjector
+- **Push**: `bash scripts/push-to-github.sh` or use the "Push to GitHub" Replit workflow
