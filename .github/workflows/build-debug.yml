@@ -81,27 +81,18 @@ jobs:
         working-directory: artifacts/numinjector
         run: npx expo prebuild --platform android --clean --no-install
 
-      # ── 6. Bundle JavaScript ───────────────────────────────────────────────
-      - name: Bundle JavaScript into APK assets
-        working-directory: artifacts/numinjector
-        run: |
-          mkdir -p android/app/src/main/assets
-          npx expo export:embed \
-            --platform android \
-            --bundle-output android/app/src/main/assets/index.android.bundle \
-            --assets-dest android/app/src/main/res \
-            --dev false \
-            --reset-cache
-
-      # ── 7. Build ───────────────────────────────────────────────────────────
+      # ── 6. Build (Gradle handles JS bundling automatically) ────────────────
       - name: Build debug APK
         working-directory: artifacts/numinjector/android
+        env:
+          EXPO_ROUTER_APP_ROOT: app
         run: |
+          export EXPO_ROUTER_APP_ROOT=app
           ./gradlew assembleDebug --no-daemon
           echo "── Debug APK outputs ──"
           find app/build/outputs/apk/debug/ -name "*.apk" -exec ls -lh {} \;
 
-      # ── 8. Upload ──────────────────────────────────────────────────────────
+      # ── 7. Upload ──────────────────────────────────────────────────────────
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
