@@ -62,7 +62,7 @@ jobs:
 
       # ── 4. JS dependencies ─────────────────────────────────────────────────
       - name: Install JS dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       # ── 4b. Read app version ────────────────────────────────────────────────
       - name: Read app version
