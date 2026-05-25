@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { NativeEventEmitter, NativeModules, Platform } from "react-native";
+import { NativeEventEmitter, NativeModules, Platform, Vibration } from "react-native";
 
 export type TargetMode = "auto" | "manual";
 
@@ -177,6 +177,8 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
           const dur = sessionStartRef.current
             ? Date.now() - sessionStartRef.current
             : 0;
+          // Triple-pulse haptic: success found signal
+          Vibration.vibrate([0, 200, 100, 200, 100, 400]);
           setState((prev) => {
             addToHistory({
               result: "found",

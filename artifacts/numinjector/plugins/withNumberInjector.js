@@ -82,6 +82,7 @@ function withManifest(config) {
       "android.permission.WAKE_LOCK",
       "android.permission.SYSTEM_ALERT_WINDOW",
       "android.permission.FOREGROUND_SERVICE",
+      "android.permission.POST_NOTIFICATIONS",
     ];
     const existingPerms = (manifest["uses-permission"] || []).map(
       (p) => p.$["android:name"]

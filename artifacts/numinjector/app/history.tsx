@@ -6,6 +6,7 @@ import {
   FlatList,
   Platform,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -238,6 +239,23 @@ export default function HistoryScreen() {
   const router = useRouter();
   const { history, clearHistory, replaySession } = useInjector();
 
+  const handleShare = useCallback(async () => {
+    if (history.length === 0) return;
+    const lines = history.map((r) => {
+      const date = new Date(r.timestamp).toLocaleString();
+      const result =
+        r.result === "found"
+          ? `FOUND: ${r.foundValue}`
+          : r.result.toUpperCase();
+      const range = `${r.config.startNumber}-${r.config.endNumber}`;
+      return `[${date}] ${result} | ${r.attempts} attempts | ${formatDuration(r.durationMs)} | Range ${range} @${r.config.delayMs}ms`;
+    });
+    const body = `NumInjector Session History (${history.length} sessions)\n${"─".repeat(44)}\n${lines.join("\n")}`;
+    await Share.share({ title: "NumInjector Sessions", message: body }).catch(
+      () => {}
+    );
+  }, [history]);
+
   const handleReplay = useCallback(
     (record: SessionRecord) => {
       replaySession(record);
@@ -295,19 +313,34 @@ export default function HistoryScreen() {
           Session History
         </Text>
         {history.length > 0 && (
-          <Pressable
-            onPress={handleClear}
-            style={({ pressed }) => [
-              styles.clearBtn,
-              { opacity: pressed ? 0.6 : 1 },
-            ]}
-          >
-            <Ionicons
-              name="trash-outline"
-              size={18}
-              color={colors.destructive}
-            />
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={handleShare}
+              style={({ pressed }) => [
+                styles.headerIconBtn,
+                { opacity: pressed ? 0.6 : 1 },
+              ]}
+            >
+              <Ionicons
+                name="share-outline"
+                size={18}
+                color={colors.primary}
+              />
+            </Pressable>
+            <Pressable
+              onPress={handleClear}
+              style={({ pressed }) => [
+                styles.headerIconBtn,
+                { opacity: pressed ? 0.6 : 1 },
+              ]}
+            >
+              <Ionicons
+                name="trash-outline"
+                size={18}
+                color={colors.destructive}
+              />
+            </Pressable>
+          </View>
         )}
       </View>
 
@@ -375,7 +408,8 @@ const styles = StyleSheet.create({
   },
   backBtn: { padding: 4 },
   headerTitle: { flex: 1, fontSize: 18 },
-  clearBtn: { padding: 4 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 4 },
+  headerIconBtn: { padding: 4 },
   list: { padding: 16 },
   emptyWrap: {
     flex: 1,

@@ -4,6 +4,7 @@ import {
 } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
+import { Accelerometer } from "expo-sensors";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -294,6 +295,23 @@ export default function HomeScreen() {
       useNativeDriver: false,
     }).start();
   }, [state.current, config.startNumber, config.endNumber, progressWidth]);
+
+  // Shake-to-stop: detect shake while running and abort injection
+  const lastShakeRef = useRef(0);
+  useEffect(() => {
+    if (!state.running) return;
+    Accelerometer.setUpdateInterval(80);
+    const sub = Accelerometer.addListener(({ x, y, z }) => {
+      const mag = Math.sqrt(x * x + y * y + z * z);
+      const now = Date.now();
+      if (mag > 2.8 && now - lastShakeRef.current > 2500) {
+        lastShakeRef.current = now;
+        stop();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      }
+    });
+    return () => sub.remove();
+  }, [state.running, stop]);
 
   const handleStartStop = useCallback(async () => {
     if (state.running) {
