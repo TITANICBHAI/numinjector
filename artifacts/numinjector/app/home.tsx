@@ -4,6 +4,7 @@ import {
 } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
+import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
@@ -13,9 +14,9 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -210,8 +211,16 @@ function ServiceBanner() {
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { config, setConfig, state, start, stop, refreshServiceStatus } =
+  const router = useRouter();
+  const { config, setConfig, state, history, start, stop, refreshServiceStatus } =
     useInjector();
+
+  const SPEED_PRESETS = [
+    { label: "⚡ Turbo", ms: 50 },
+    { label: "Fast", ms: 200 },
+    { label: "Normal", ms: 400 },
+    { label: "Careful", ms: 1000 },
+  ] as const;
 
   const [expanded, setExpanded] = useState<Set<SectionId>>(
     new Set(["target", "range"])
@@ -341,7 +350,41 @@ export default function HomeScreen() {
               Automated numeric field testing
             </Text>
           </View>
-          <View style={styles.serviceStatusWrap}>
+          <View style={styles.headerRight}>
+            <Pressable
+              onPress={() => router.push("/history")}
+              style={({ pressed }) => [
+                styles.historyBtn,
+                {
+                  backgroundColor: pressed
+                    ? colors.muted
+                    : colors.muted + "88",
+                  borderRadius: 10,
+                },
+              ]}
+            >
+              <Ionicons name="time-outline" size={18} color={colors.primary} />
+              {history.length > 0 && (
+                <View
+                  style={[
+                    styles.historyBadge,
+                    { backgroundColor: colors.primary },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.historyBadgeText,
+                      {
+                        color: colors.primaryForeground,
+                        fontFamily: "Inter_700Bold",
+                      },
+                    ]}
+                  >
+                    {history.length > 99 ? "99+" : history.length}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
             <View
               style={[
                 styles.serviceStatusDot,
@@ -363,7 +406,7 @@ export default function HomeScreen() {
                 },
               ]}
             >
-              {state.serviceEnabled ? "Service Active" : "Service Off"}
+              {state.serviceEnabled ? "Active" : "Off"}
             </Text>
           </View>
         </View>
@@ -651,6 +694,82 @@ export default function HomeScreen() {
                   />
                 </View>
               </View>
+
+              {/* Speed presets */}
+              <View style={styles.speedRow}>
+                {SPEED_PRESETS.map((p) => (
+                  <Pressable
+                    key={p.ms}
+                    onPress={() => setConfig({ delayMs: p.ms })}
+                    disabled={state.running}
+                    style={({ pressed }) => [
+                      styles.speedBtn,
+                      {
+                        backgroundColor:
+                          config.delayMs === p.ms
+                            ? colors.secondary + "33"
+                            : pressed
+                              ? colors.muted
+                              : colors.muted + "55",
+                        borderColor:
+                          config.delayMs === p.ms
+                            ? colors.secondary
+                            : colors.border,
+                        borderRadius: colors.radius - 4,
+                        opacity: state.running ? 0.5 : 1,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.speedBtnText,
+                        {
+                          color:
+                            config.delayMs === p.ms
+                              ? colors.secondary
+                              : colors.mutedForeground,
+                          fontFamily:
+                            config.delayMs === p.ms
+                              ? "Inter_600SemiBold"
+                              : "Inter_400Regular",
+                        },
+                      ]}
+                    >
+                      {p.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {/* Common PINs priority mode */}
+              <View style={[styles.divider, { backgroundColor: colors.border }]} />
+              <View style={styles.switchRow}>
+                <View style={styles.switchLeft}>
+                  <Text
+                    style={[
+                      styles.switchLabel,
+                      { color: colors.foreground, fontFamily: "Inter_600SemiBold" },
+                    ]}
+                  >
+                    Common PINs First
+                  </Text>
+                  <Text
+                    style={[
+                      styles.switchDesc,
+                      { color: colors.mutedForeground, fontFamily: "Inter_400Regular" },
+                    ]}
+                  >
+                    Try ~80 most-common PINs before the sequential sweep
+                  </Text>
+                </View>
+                <Switch
+                  value={config.useCommonPins}
+                  onValueChange={(v) => setConfig({ useCommonPins: v })}
+                  disabled={state.running}
+                  trackColor={{ false: colors.muted, true: colors.primary + "66" }}
+                  thumbColor={config.useCommonPins ? colors.primary : colors.mutedForeground}
+                />
+              </View>
             </View>
           )}
         </View>
@@ -798,14 +917,27 @@ const styles = StyleSheet.create({
   },
   appTitle: { fontSize: 22 },
   appSub: { fontSize: 12, marginTop: 2 },
-  serviceStatusWrap: {
+  headerRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
+    gap: 8,
   },
+  historyBtn: {
+    padding: 7,
+    position: "relative",
+  },
+  historyBadge: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  historyBadgeText: { fontSize: 9 },
   serviceStatusDot: {
     width: 7,
     height: 7,
@@ -896,6 +1028,26 @@ const styles = StyleSheet.create({
   },
   startBtnText: { fontSize: 18 },
   disabledHint: { textAlign: "center", fontSize: 12 },
+  speedRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  speedBtn: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 8,
+    borderWidth: 1,
+  },
+  speedBtnText: { fontSize: 12 },
+  switchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  switchLeft: { flex: 1, gap: 2 },
+  switchLabel: { fontSize: 14 },
+  switchDesc: { fontSize: 11, lineHeight: 16 },
 });
 
 function formatNum(n: number, config?: { padding: number; padChar: string }) {

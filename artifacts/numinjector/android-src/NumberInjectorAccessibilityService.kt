@@ -17,21 +17,18 @@ class NumberInjectorAccessibilityService : AccessibilityService() {
         @Volatile
         var instance: NumberInjectorAccessibilityService? = null
 
-        /**
-         * Check whether this service is active by inspecting the enabled
-         * accessibility services setting.
-         */
         fun isEnabled(context: Context): Boolean {
-            val expectedId = "${context.packageName}/${NumberInjectorAccessibilityService::class.java.name}"
+            val expectedId =
+                "${context.packageName}/${NumberInjectorAccessibilityService::class.java.name}"
             return try {
                 val enabled = Settings.Secure.getString(
                     context.contentResolver,
                     Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
                 ) ?: return false
-                val colonSplitter = TextUtils.SimpleStringSplitter(':')
-                colonSplitter.setString(enabled)
-                while (colonSplitter.hasNext()) {
-                    if (colonSplitter.next().equals(expectedId, ignoreCase = true)) return true
+                val splitter = TextUtils.SimpleStringSplitter(':')
+                splitter.setString(enabled)
+                while (splitter.hasNext()) {
+                    if (splitter.next().equals(expectedId, ignoreCase = true)) return true
                 }
                 false
             } catch (e: Exception) {
@@ -44,9 +41,7 @@ class NumberInjectorAccessibilityService : AccessibilityService() {
     private var injectionJob: Job? = null
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    override fun onServiceConnected() {
-        instance = this
-    }
+    override fun onServiceConnected() { instance = this }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
@@ -54,33 +49,22 @@ class NumberInjectorAccessibilityService : AccessibilityService() {
         return super.onUnbind(intent)
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Events are handled inside the injection loop via performAction
-    }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onInterrupt() { injectionJob?.cancel() }
 
-    override fun onInterrupt() {
-        injectionJob?.cancel()
-    }
+    // ── Node finders ──────────────────────────────────────────────────────────
 
-    /**
-     * Find the first editable text field on screen matching the given hint.
-     * If fieldMode == "auto", returns the first editable node found.
-     */
     private fun findInputField(mode: String, hint: String): AccessibilityNodeInfo? {
         val root = rootInActiveWindow ?: return null
-        return if (mode == "auto") {
-            findFirstEditable(root)
-        } else {
-            findNodeByHint(root, hint) ?: findFirstEditable(root)
-        }
+        return if (mode == "auto") findFirstEditable(root)
+        else findNodeByHint(root, hint) ?: findFirstEditable(root)
     }
 
     private fun findFirstEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
         if (node.isEditable) return node
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findFirstEditable(child)
+            val found = findFirstEditable(node.getChild(i))
             if (found != null) return found
         }
         return null
@@ -88,112 +72,111 @@ class NumberInjectorAccessibilityService : AccessibilityService() {
 
     private fun findNodeByHint(node: AccessibilityNodeInfo?, hint: String): AccessibilityNodeInfo? {
         if (node == null || hint.isBlank()) return null
-        val nodeText = node.text?.toString() ?: ""
-        val nodeDesc = node.contentDescription?.toString() ?: ""
-        val nodeHint = node.hintText?.toString() ?: ""
-        if (nodeText.contains(hint, ignoreCase = true) ||
-            nodeDesc.contains(hint, ignoreCase = true) ||
-            nodeHint.contains(hint, ignoreCase = true)) {
+        val text = node.text?.toString() ?: ""
+        val desc = node.contentDescription?.toString() ?: ""
+        val hintText = node.hintText?.toString() ?: ""
+        if (text.contains(hint, true) || desc.contains(hint, true) || hintText.contains(hint, true))
             return node
-        }
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findNodeByHint(child, hint)
+            val found = findNodeByHint(node.getChild(i), hint)
             if (found != null) return found
         }
         return null
     }
 
-    /**
-     * Find the submit/confirm button on screen.
-     */
     private fun findButton(mode: String, hint: String): AccessibilityNodeInfo? {
         val root = rootInActiveWindow ?: return null
-        return if (mode == "auto") {
-            findFirstClickableButton(root)
-        } else {
-            findNodeByHint(root, hint) ?: findFirstClickableButton(root)
-        }
+        return if (mode == "auto") findFirstClickableButton(root)
+        else findNodeByHint(root, hint) ?: findFirstClickableButton(root)
     }
 
     private fun findFirstClickableButton(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
         if (node.isClickable && node.className?.contains("Button") == true) return node
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findFirstClickableButton(child)
+            val found = findFirstClickableButton(node.getChild(i))
             if (found != null) return found
         }
-        // Fallback: any clickable leaf
         if (node.isClickable && node.childCount == 0) return node
         return null
     }
 
-    /**
-     * Set text in an editable node using ACTION_SET_TEXT (API 21+).
-     */
+    // ── Text injection ────────────────────────────────────────────────────────
+
     private fun setText(node: AccessibilityNodeInfo, text: String): Boolean {
         val args = Bundle()
-        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        args.putCharSequence(
+            AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text
+        )
         return node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
     }
 
+    // ── Core injection ────────────────────────────────────────────────────────
+
     /**
-     * Start the injection loop. Runs on a background coroutine.
+     * Try a single value: inject → click → wait → check.
+     * Returns true if the injection appears to have succeeded.
      */
+    private suspend fun tryValue(
+        formatted: String,
+        config: InjectionConfig,
+    ): Boolean {
+        val inputNode = findInputField(config.fieldMode, config.fieldHint)
+            ?: return false
+
+        val setOk = setText(inputNode, formatted)
+        if (!setOk) {
+            inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            delay(80)
+            setText(inputNode, formatted)
+        }
+        delay(100)
+
+        val buttonNode = findButton(config.buttonMode, config.buttonHint)
+        buttonNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+
+        delay(config.delayMs)
+
+        // Heuristic: field gone, cleared, or navigation happened → probable match
+        val rootAfter = rootInActiveWindow
+        val fieldAfter = rootAfter?.let { findFirstEditable(it) }
+        return fieldAfter == null ||
+               (fieldAfter.text?.toString()?.let { it.isEmpty() || it != formatted } == true)
+    }
+
     fun startInjection(config: InjectionConfig, callback: InjectionCallback) {
         injectionJob?.cancel()
         injectionJob = serviceScope.launch {
             var attempts = 0
-            var current = config.startNumber
 
+            // ── Phase 1: Priority (common) PINs ──────────────────────────────
+            if (config.useCommonPins && config.priorityPins.isNotEmpty()) {
+                val seen = mutableSetOf<String>()
+                for (pin in config.priorityPins) {
+                    if (!isActive) break
+                    if (!seen.add(pin)) continue          // dedupe
+
+                    val matched = tryValue(pin, config)
+                    attempts++
+                    // Report progress using numeric value if parseable, else -1
+                    callback.onProgress(pin.toIntOrNull() ?: -1, attempts)
+
+                    if (matched) {
+                        callback.onFound(pin, attempts)
+                        return@launch
+                    }
+                }
+            }
+
+            // ── Phase 2: Sequential sweep ─────────────────────────────────────
+            var current = config.startNumber
             while (current <= config.endNumber && isActive) {
                 val formatted = config.format(current)
-
-                // Find nodes fresh each iteration (UI may change)
-                val inputNode = findInputField(config.fieldMode, config.fieldHint)
-                val buttonNode = findButton(config.buttonMode, config.buttonHint)
-
-                if (inputNode == null) {
-                    callback.onError("Could not find input field. Make sure the target app is in the foreground.")
-                    return@launch
-                }
-
-                // Inject the number
-                val setOk = setText(inputNode, formatted)
-                if (!setOk) {
-                    // Try focus first then set text
-                    inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                    delay(80)
-                    setText(inputNode, formatted)
-                }
-
-                delay(100) // brief settle
-
-                // Click the button if found
-                buttonNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-
+                val matched = tryValue(formatted, config)
                 attempts++
                 callback.onProgress(current, attempts)
 
-                // Wait for the app to respond
-                delay(config.delayMs)
-
-                // Heuristic "found" detection: if the field is now empty or the
-                // app navigated away (root changed), the value may have been accepted.
-                // The user can also stop manually. For maximum compatibility this is
-                // intentionally conservative — advanced callers can use the manual stop.
-                val rootAfter = rootInActiveWindow
-                val fieldAfter = if (rootAfter != null) findFirstEditable(rootAfter) else null
-                if (fieldAfter != null) {
-                    val textAfter = fieldAfter.text?.toString() ?: ""
-                    if (textAfter.isEmpty() || textAfter != formatted) {
-                        // Field was cleared or changed — possible match, stop and report
-                        callback.onFound(formatted, attempts)
-                        return@launch
-                    }
-                } else {
-                    // Field disappeared — navigation occurred, likely success
+                if (matched) {
                     callback.onFound(formatted, attempts)
                     return@launch
                 }
@@ -201,14 +184,10 @@ class NumberInjectorAccessibilityService : AccessibilityService() {
                 current += config.step
             }
 
-            // Exhausted the range
             callback.onStopped(attempts)
         }
     }
 
-    /**
-     * Stop the currently running injection loop.
-     */
     fun stopInjection() {
         injectionJob?.cancel()
         injectionJob = null

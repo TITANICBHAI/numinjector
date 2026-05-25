@@ -26,6 +26,7 @@ function RootLayoutNav() {
       <Stack.Screen name="index" />
       <Stack.Screen name="onboarding" />
       <Stack.Screen name="home" />
+      <Stack.Screen name="history" />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="+not-found" />
     </Stack>

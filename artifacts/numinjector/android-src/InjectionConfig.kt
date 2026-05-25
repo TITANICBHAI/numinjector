@@ -11,6 +11,8 @@ data class InjectionConfig(
     val buttonHint: String,
     val padding: Int,
     val padChar: String,
+    val useCommonPins: Boolean = false,
+    val priorityPins: List<String> = emptyList(),
 ) {
     fun format(n: Int): String {
         val s = n.toString()

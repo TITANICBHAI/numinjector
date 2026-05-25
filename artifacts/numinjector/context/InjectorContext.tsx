@@ -7,11 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import {
-  NativeEventEmitter,
-  NativeModules,
-  Platform,
-} from "react-native";
+import { NativeEventEmitter, NativeModules, Platform } from "react-native";
 
 export type TargetMode = "auto" | "manual";
 
@@ -26,6 +22,17 @@ export interface InjectorConfig {
   buttonHint: string;
   padding: number;
   padChar: string;
+  useCommonPins: boolean;
+}
+
+export interface SessionRecord {
+  id: string;
+  timestamp: number;
+  config: InjectorConfig;
+  result: "found" | "stopped" | "error";
+  foundValue: string | null;
+  attempts: number;
+  durationMs: number;
 }
 
 export interface InjectionState {
@@ -43,6 +50,9 @@ interface InjectorContextType {
   config: InjectorConfig;
   setConfig: (c: Partial<InjectorConfig>) => void;
   state: InjectionState;
+  history: SessionRecord[];
+  clearHistory: () => void;
+  replaySession: (record: SessionRecord) => void;
   onboarded: boolean;
   setOnboarded: (v: boolean) => void;
   start: () => Promise<void>;
@@ -63,6 +73,7 @@ const defaultConfig: InjectorConfig = {
   buttonHint: "",
   padding: 0,
   padChar: "0",
+  useCommonPins: false,
 };
 
 const defaultState: InjectionState = {
@@ -76,10 +87,25 @@ const defaultState: InjectionState = {
   overlayGranted: false,
 };
 
+// Top ~80 most common 4-digit PINs in the wild
+export const COMMON_PINS = [
+  "0000","1111","2222","3333","4444","5555","6666","7777","8888","9999",
+  "1234","0123","2345","3456","4567","5678","6789","7890",
+  "9876","8765","7654","6543","5432","4321","3210",
+  "1212","1122","0101","2580","1010","2020","1001","1100","0110","2468",
+  "1357","0007","1337","6969","8008","7007","4200","1313","2525","0420",
+  "1990","1991","1992","1993","1994","1995","1996","1997","1998","1999",
+  "2000","2001","2002","2003","2004","2005","2006","2007","2008","2009","2010",
+  "1104","0911","1206","2112","0000","1234","1111","0000",
+];
+
 const InjectorContext = createContext<InjectorContextType>({
   config: defaultConfig,
   setConfig: () => {},
   state: defaultState,
+  history: [],
+  clearHistory: () => {},
+  replaySession: () => {},
   onboarded: false,
   setOnboarded: () => {},
   start: async () => {},
@@ -94,40 +120,50 @@ const NativeInjector =
 
 const STORAGE_KEY_CONFIG = "@numinjector_config";
 const STORAGE_KEY_ONBOARDED = "@numinjector_onboarded";
+const STORAGE_KEY_HISTORY = "@numinjector_history";
+const MAX_HISTORY = 50;
 
 export function InjectorProvider({ children }: { children: React.ReactNode }) {
   const [config, setConfigState] = useState<InjectorConfig>(defaultConfig);
   const [state, setState] = useState<InjectionState>(defaultState);
+  const [history, setHistory] = useState<SessionRecord[]>([]);
   const [onboarded, setOnboardedState] = useState(false);
-  const emitterRef = useRef<NativeEventEmitter | null>(null);
+  const sessionStartRef = useRef<number | null>(null);
+  const sessionConfigRef = useRef<InjectorConfig>(defaultConfig);
 
+  // Load persisted state
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY_CONFIG).then((raw) => {
-      if (raw) {
+    AsyncStorage.multiGet([
+      STORAGE_KEY_CONFIG,
+      STORAGE_KEY_ONBOARDED,
+      STORAGE_KEY_HISTORY,
+    ]).then((pairs) => {
+      for (const [key, raw] of pairs) {
+        if (!raw) continue;
         try {
-          const saved = JSON.parse(raw) as Partial<InjectorConfig>;
-          setConfigState((prev) => ({ ...prev, ...saved }));
+          if (key === STORAGE_KEY_CONFIG) {
+            const saved = JSON.parse(raw) as Partial<InjectorConfig>;
+            setConfigState((prev) => ({ ...prev, ...saved }));
+          } else if (key === STORAGE_KEY_ONBOARDED) {
+            if (raw === "true") setOnboardedState(true);
+          } else if (key === STORAGE_KEY_HISTORY) {
+            setHistory(JSON.parse(raw) as SessionRecord[]);
+          }
         } catch {}
       }
     });
-    AsyncStorage.getItem(STORAGE_KEY_ONBOARDED).then((val) => {
-      if (val === "true") setOnboardedState(true);
-    });
   }, []);
 
+  // Native event listener
   useEffect(() => {
     if (!NativeInjector) return;
-
     const emitter = new NativeEventEmitter(NativeInjector);
-    emitterRef.current = emitter;
-
     const sub = emitter.addListener(
       "NumberInjectorEvent",
       (event: {
         type: string;
         current?: number;
         attempts?: number;
-        found?: boolean;
         value?: string;
         error?: string;
       }) => {
@@ -138,25 +174,77 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
             attempts: event.attempts ?? prev.attempts,
           }));
         } else if (event.type === "found") {
-          setState((prev) => ({
-            ...prev,
-            running: false,
-            found: true,
-            foundValue: event.value ?? null,
-          }));
+          const dur = sessionStartRef.current
+            ? Date.now() - sessionStartRef.current
+            : 0;
+          setState((prev) => {
+            addToHistory({
+              result: "found",
+              foundValue: event.value ?? null,
+              attempts: event.attempts ?? prev.attempts,
+              durationMs: dur,
+              config: sessionConfigRef.current,
+            });
+            return { ...prev, running: false, found: true, foundValue: event.value ?? null };
+          });
         } else if (event.type === "stopped") {
-          setState((prev) => ({ ...prev, running: false }));
+          const dur = sessionStartRef.current
+            ? Date.now() - sessionStartRef.current
+            : 0;
+          setState((prev) => {
+            addToHistory({
+              result: "stopped",
+              foundValue: null,
+              attempts: event.attempts ?? prev.attempts,
+              durationMs: dur,
+              config: sessionConfigRef.current,
+            });
+            return { ...prev, running: false };
+          });
         } else if (event.type === "error") {
-          setState((prev) => ({
-            ...prev,
-            running: false,
-            error: event.error ?? "Unknown error",
-          }));
+          const dur = sessionStartRef.current
+            ? Date.now() - sessionStartRef.current
+            : 0;
+          setState((prev) => {
+            addToHistory({
+              result: "error",
+              foundValue: null,
+              attempts: prev.attempts,
+              durationMs: dur,
+              config: sessionConfigRef.current,
+            });
+            return { ...prev, running: false, error: event.error ?? "Unknown error" };
+          });
         }
       }
     );
-
     return () => sub.remove();
+  }, []);
+
+  const addToHistory = useCallback(
+    (partial: Omit<SessionRecord, "id" | "timestamp">) => {
+      const record: SessionRecord = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: Date.now(),
+        ...partial,
+      };
+      setHistory((prev) => {
+        const next = [record, ...prev].slice(0, MAX_HISTORY);
+        AsyncStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(next));
+        return next;
+      });
+    },
+    []
+  );
+
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+    AsyncStorage.removeItem(STORAGE_KEY_HISTORY);
+  }, []);
+
+  const replaySession = useCallback((record: SessionRecord) => {
+    setConfigState(record.config);
+    AsyncStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(record.config));
   }, []);
 
   const refreshServiceStatus = useCallback(async () => {
@@ -166,11 +254,7 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
         NativeInjector.isAccessibilityServiceEnabled() as Promise<boolean>,
         NativeInjector.hasOverlayPermission() as Promise<boolean>,
       ]);
-      setState((prev) => ({
-        ...prev,
-        serviceEnabled: enabled,
-        overlayGranted: overlay,
-      }));
+      setState((prev) => ({ ...prev, serviceEnabled: enabled, overlayGranted: overlay }));
     } catch {}
   }, []);
 
@@ -199,6 +283,8 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
       }));
       return;
     }
+    sessionStartRef.current = Date.now();
+    sessionConfigRef.current = config;
     setState((prev) => ({
       ...prev,
       running: true,
@@ -220,6 +306,8 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
         buttonHint: config.buttonHint,
         padding: config.padding,
         padChar: config.padChar,
+        useCommonPins: config.useCommonPins,
+        priorityPins: config.useCommonPins ? COMMON_PINS : [],
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -228,22 +316,16 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
   }, [config]);
 
   const stop = useCallback(() => {
-    if (NativeInjector) {
-      NativeInjector.stopInjection().catch(() => {});
-    }
+    if (NativeInjector) NativeInjector.stopInjection().catch(() => {});
     setState((prev) => ({ ...prev, running: false }));
   }, []);
 
   const openAccessibilitySettings = useCallback(() => {
-    if (NativeInjector) {
-      NativeInjector.openAccessibilitySettings().catch(() => {});
-    }
+    NativeInjector?.openAccessibilitySettings().catch(() => {});
   }, []);
 
   const openOverlaySettings = useCallback(() => {
-    if (NativeInjector) {
-      NativeInjector.openOverlaySettings().catch(() => {});
-    }
+    NativeInjector?.openOverlaySettings().catch(() => {});
   }, []);
 
   return (
@@ -252,6 +334,9 @@ export function InjectorProvider({ children }: { children: React.ReactNode }) {
         config,
         setConfig,
         state,
+        history,
+        clearHistory,
+        replaySession,
         onboarded,
         setOnboarded,
         start,
